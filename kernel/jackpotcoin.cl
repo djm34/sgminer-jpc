@@ -257,6 +257,51 @@ void KECCAK512_80(ulong X[]) {
 }
 
 
+void KECCAK512_88(ulong X[]) {
+     ulong c0x, c1x, c2x, c3x, c4x;
+     ulong a00 =  X[0];
+     ulong a10 = ~X[1];
+     ulong a20 = ~X[2];
+     ulong a30 =  X[3];
+     ulong a40 =  X[4];
+     ulong a01 =  X[5];
+     ulong a11 =  X[6];
+     ulong a21 =  X[7];
+     ulong a31 = ~X[8];
+     ulong a41 =  0;
+     ulong a02 =  0;
+     ulong a12 =  0;
+     ulong a22 =  0xFFFFFFFFFFFFFFFFUL;
+     ulong a32 =  0;
+     ulong a42 =  0;
+     ulong a03 =  0;
+     ulong a13 =  0;
+     ulong a23 =  0xFFFFFFFFFFFFFFFFUL;
+     ulong a33 =  0;
+     ulong a43 =  0;
+     ulong a04 =  0xFFFFFFFFFFFFFFFFUL;
+     ulong a14 =  0;
+     ulong a24 =  0;
+     ulong a34 =  0;
+     ulong a44 =  0;
+     KECCAK_F_1600;
+	 a00 ^=  X[9];
+     a10 ^=  X[10];
+     a20 ^=  0x01;
+     a31 ^=  0x8000000000000000UL;
+     KECCAK_F_1600;
+     a10     = ~a10;
+     a20     = ~a20;
+     X[0x00] =  a00;
+     X[0x01] =  a10;
+     X[0x02] =  a20;
+     X[0x03] =  a30;
+     X[0x04] =  a40;
+     X[0x05] =  a01;
+     X[0x06] =  a11;
+     X[0x07] =  a21;
+}
+
 void SKEIN512(ulong X[]) {
      ulong h0 = SKEIN_INI[0x00], h1 = SKEIN_INI[0x01];
      ulong h2 = SKEIN_INI[0x02], h3 = SKEIN_INI[0x03];
@@ -315,43 +360,35 @@ __kernel void search(__global uint * input, volatile __global uint * output, con
      }
      HASH.U4[19] = SWAP4(gid);
 
-
-     //
-     // Input Hashing Using SHA3 512
-     //
-     KECCAK512_80(HASH.U8);
-
      //
      // Dual Version Mode
      //
+
      if (HASH.U4[21] == 7) {
-        if ((HASH.U4[0] & 7) == 0) {
-           if ((HASH.U8[3] <= target) && ((HASH.U4[0] & 7) == 0)) {
-              output[output[0xFF]++] = gid;
-           }
+        KECCAK512_88(HASH.U8);
+        if ((HASH.U8[3] <= target) && ((HASH.U4[0] & 7) == 0)) {
+           output[output[0xFF]++] = gid;
         }
      }
      else {
-         //
-         // Unbalacing/Anti-parallelism at CU using Heavy/Light Random Pair
-         //
-         for (uint round = 0; round < 3; round++) {
-             if (HASH.U4[0] & 0x1) {
-                GROESTL512(HASH.U8, LT0, LT1, LT2, LT3, LT4, LT5, LT6, LT7);
-             }
-             else {
-                SKEIN512(HASH.U8);
-             }
-             if (HASH.U4[0] & 0x01) {
-                BLAKE512(HASH.U8);
-             }
-             else {
-                JH512(HASH.U8);
-             }
-         }
-         if (HASH.U8[3] <= target) {
-            output[output[0xFF]++] = gid;
-         }
+        KECCAK512_80(HASH.U8);
+        for (uint round = 0; round < 3; round++) {
+            if (HASH.U4[0] & 0x1) {
+               GROESTL512(HASH.U8, LT0, LT1, LT2, LT3, LT4, LT5, LT6, LT7);
+            }
+            else {
+               SKEIN512(HASH.U8);
+            }
+            if (HASH.U4[0] & 0x01) {
+               BLAKE512(HASH.U8);
+            }
+            else {
+               JH512(HASH.U8);
+            }
+        }
+        if (HASH.U8[3] <= target) {
+           output[output[0xFF]++] = gid;
+        }
      }
 
 }

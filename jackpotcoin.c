@@ -75,11 +75,12 @@ static void advsha3_hash(void *state, const void *input) {
        (unsigned int)(((unsigned char *)input)[86]) << 16 |
        (unsigned int)(((unsigned char *)input)[87]) << 24 );
 
-    sph_keccak512_init(&ctx_keccak);
-    sph_keccak512 (&ctx_keccak, input, 80);
-    sph_keccak512_close(&ctx_keccak, (&hash));
-
     if (round_mask == 7) {
+
+       sph_keccak512_init(&ctx_keccak);
+       sph_keccak512 (&ctx_keccak, input, 88);
+       sph_keccak512_close(&ctx_keccak, (&hash));
+
        unsigned int rounds  = hash[0] & 7;
        unsigned int round;
        for (round = 0; round < rounds; round++) {
@@ -108,6 +109,11 @@ static void advsha3_hash(void *state, const void *input) {
        }
     }
     else {
+
+       sph_keccak512_init(&ctx_keccak);
+       sph_keccak512 (&ctx_keccak, input, 80);
+       sph_keccak512_close(&ctx_keccak, (&hash));
+
        unsigned int round;
        for (round = 0; round < 3; round++) {
            if (hash[0] & 0x01) {
