@@ -79,37 +79,58 @@ static void advsha3_hash(void *state, const void *input) {
     sph_keccak512 (&ctx_keccak, input, 80);
     sph_keccak512_close(&ctx_keccak, (&hash));
 
-    unsigned int round;
-    for (round = 0; round < 3; round++) {
-        if (hash[0] & 0x01) {
-           sph_groestl512_init(&ctx_groestl);
-           sph_groestl512 (&ctx_groestl, (&hash), 64);
-           sph_groestl512_close(&ctx_groestl, (&hash));
-        }
-        else {
-           sph_skein512_init(&ctx_skein);
-           sph_skein512 (&ctx_skein, (&hash), 64);
-           sph_skein512_close(&ctx_skein, (&hash));
-        }
-        if (hash[0] & 0x01) {
-           sph_blake512_init(&ctx_blake);
-           sph_blake512 (&ctx_blake, (&hash), 64);
-           sph_blake512_close(&ctx_blake, (&hash));
-        }
-        else {
-           sph_jh512_init(&ctx_jh);
-           sph_jh512 (&ctx_jh, (&hash), 64);
-           sph_jh512_close(&ctx_jh, (&hash));
-        }
-        if (opt_debughash) {
-           unsigned char * ptr = (unsigned char *)(&hash[0]);
-           int ii;
-           printf("round %d : ", round);
-           for (ii = 0; ii < 64; ii++) {
-               printf("%.2x", (unsigned char)ptr[ii]);
+    if (round_mask == 7) {
+       unsigned int rounds  = hash[0] & 7;
+       unsigned int round;
+       for (round = 0; round < rounds; round++) {
+           switch (hash[0] & 3) {
+             case 0:
+                  sph_blake512_init(&ctx_blake);
+                  sph_blake512 (&ctx_blake, hash, 64);
+                  sph_blake512_close(&ctx_blake, hash);
+                  break;
+             case 1:
+                  sph_groestl512_init(&ctx_groestl);
+                  sph_groestl512 (&ctx_groestl, hash, 64);
+                  sph_groestl512_close(&ctx_groestl, hash);
+                  break;
+             case 2:
+                  sph_jh512_init(&ctx_jh);
+                  sph_jh512 (&ctx_jh, hash, 64);
+                  sph_jh512_close(&ctx_jh, hash);
+                  break;
+             case 3:
+                  sph_skein512_init(&ctx_skein);
+                  sph_skein512 (&ctx_skein, hash, 64);
+                  sph_skein512_close(&ctx_skein, hash);
+                 break;
+            }
+       }
+    }
+    else {
+       unsigned int round;
+       for (round = 0; round < 3; round++) {
+           if (hash[0] & 0x01) {
+              sph_groestl512_init(&ctx_groestl);
+              sph_groestl512 (&ctx_groestl, (&hash), 64);
+              sph_groestl512_close(&ctx_groestl, (&hash));
            }
-           printf("\n");
-        }
+           else {
+              sph_skein512_init(&ctx_skein);
+              sph_skein512 (&ctx_skein, (&hash), 64);
+              sph_skein512_close(&ctx_skein, (&hash));
+           }
+           if (hash[0] & 0x01) {
+              sph_blake512_init(&ctx_blake);
+              sph_blake512 (&ctx_blake, (&hash), 64);
+              sph_blake512_close(&ctx_blake, (&hash));
+           }
+           else {
+              sph_jh512_init(&ctx_jh);
+              sph_jh512 (&ctx_jh, (&hash), 64);
+              sph_jh512_close(&ctx_jh, (&hash));
+           }
+       }
     }
 
 	memcpy(state, hash, 32);

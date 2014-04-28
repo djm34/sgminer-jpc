@@ -241,7 +241,8 @@ void KECCAK512_80(ulong X[]) {
      ulong a44 =  0;
      KECCAK_F_1600;
 	 a00 ^=  X[9];
-     a10 ^=  0x01;
+     a10 ^=  X[10];
+     a20 ^=  0x01;
      a31 ^=  0x8000000000000000UL;
      KECCAK_F_1600;
      a10     = ~a10;
@@ -285,6 +286,8 @@ void SKEIN512(ulong X[]) {
      X[0x07] = h7;
 }
 
+#define WORKSIZE 256
+
 __attribute__((reqd_work_group_size(WORKSIZE, 1, 1)))
 __kernel void search(__global uint * input, volatile __global uint * output, const ulong target) {
 
@@ -304,55 +307,32 @@ __kernel void search(__global uint * input, volatile __global uint * output, con
      barrier(CLK_LOCAL_MEM_FENCE);
 
      uint  gid = get_global_id(0);
-
      union {
         uint  U4[22];
         ulong U8[11];
      } HASH;
 
-     for (uint i = 0; i < 22; i++) {
+	 for (uint i = 0; i < 22; i++) {
          HASH.U4[i] = input[i];
      }
-     HASH.U4[19] = SWAP4(gid);
+	 HASH.U4[19] = SWAP4(gid);
 
+	 KECCAK512_80(HASH.U8);
 
-     //
-     // Input Hashing Using SHA3 512
-     //
-     KECCAK512_80(HASH.U8);
+   uint rounds = HASH.U4[0x00] & 0x00000007U;
+	 for (uint i = 0; i < 8; i++) {
+		   if (i < rounds) {
+          uint method = HASH.U4[0x00] & 0x00000003U;
+          if      (method == 0) { BLAKE512(HASH.U8);                                           }
+          else if (method == 1) { GROESTL512(HASH.U8, LT0, LT1, LT2, LT3, LT4, LT5, LT6, LT7); }
+          else if (method == 2) { JH512(HASH.U8);                                              }
+          else if (method == 3) { SKEIN512(HASH.U8);                                           }
+				}
+	  }
 
-     //
-     // Dual Version Mode
-     //
-     if (HASH.U4[21] == 7) {
-        if ((HASH.U4[0] & 7) == 0) {
-           if ((HASH.U8[3] <= target) && ((HASH.U4[0] & 7) == 0)) {
-              output[output[0xFF]++] = gid;
-           }
-        }
-     }
-     else {
-         //
-         // Unbalacing/Anti-parallelism at CU using Heavy/Light Random Pair
-         //
-         for (uint round = 0; round < 3; round++) {
-             if (HASH.U4[0] & 0x1) {
-                GROESTL512(HASH.U8, LT0, LT1, LT2, LT3, LT4, LT5, LT6, LT7);
-             }
-             else {
-                SKEIN512(HASH.U8);
-             }
-             if (HASH.U4[0] & 0x01) {
-                BLAKE512(HASH.U8);
-             }
-             else {
-                JH512(HASH.U8);
-             }
-         }
-         if (HASH.U8[3] <= target) {
-            output[output[0xFF]++] = gid;
-         }
-     }
+    if (HASH.U8[3] <= target) {
+       output[output[0xFF]++] = gid;
+    }
 
 }
 
