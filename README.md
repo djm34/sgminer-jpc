@@ -3,13 +3,13 @@
 
 ## Introduction
 
-This is the updated version of SPH SGMINER to support AdvSHA3 Secure Hashing Method.
+This is the updated version of SPH SGMINER to support Jackpotcoin Secure Hashing Method.
 
 
-AdvSHA3
+JHA(Jackpotcoin Hashing Algorithm)
 
    1 round SHA3 (Keccak) input hashing with 
-   9 rounds random using 4 (BLACK, JH, GROESTL, SKEIN) candidates hashing methods are applied,
+   6 rounds random using 4 (BLACK, JH, GROESTL, SKEIN) candidates hashing methods are applied,
    
    It is the most secure hashing method, using ALU and Internal Memory of GPU to reduce
    the power consumption.
