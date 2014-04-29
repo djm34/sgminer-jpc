@@ -1,6 +1,12 @@
 # Release news
 
 
+
+## Version 4.2.1a
+
+* Stratum Support 
+
+
 ## Version 4.2.1
 
 * AdvSHA3 has added
