@@ -11,7 +11,7 @@
 #define ANIMECOIN_KERNNAME "animecoin"
 
 /* Define to the number of bits in type 'ptrdiff_t'. */
-#define BITSIZEOF_PTRDIFF_T 0
+#define BITSIZEOF_PTRDIFF_T 32
 
 /* Define to the number of bits in type 'sig_atomic_t'. */
 #define BITSIZEOF_SIG_ATOMIC_T 0
@@ -20,7 +20,7 @@
 #define BITSIZEOF_SIZE_T 0
 
 /* Define to the number of bits in type 'wchar_t'. */
-#define BITSIZEOF_WCHAR_T 0
+#define BITSIZEOF_WCHAR_T 16
 
 /* Define to the number of bits in type 'wint_t'. */
 #define BITSIZEOF_WINT_T 0
@@ -126,7 +126,7 @@
 /* #undef HAVE_LIBWINPTHREAD */
 
 /* Define to 1 if the system has the type `long long int'. */
-/* #undef HAVE_LONG_LONG_INT */
+#define HAVE_LONG_LONG_INT 1
 
 /* Define to 1 if mmap()'s MAP_ANONYMOUS flag is available after including
    config.h and <sys/mman.h>. */
@@ -280,7 +280,7 @@
 #define HAVE_UNISTD_H 1
 
 /* Define to 1 if the system has the type `unsigned long long int'. */
-/* #undef HAVE_UNSIGNED_LONG_LONG_INT */
+#define HAVE_UNSIGNED_LONG_LONG_INT 1
 
 /* Define if __attribute__((warn_unused_result)) */
 #define HAVE_WARN_UNUSED_RESULT 1

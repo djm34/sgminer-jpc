@@ -1500,7 +1500,7 @@ static char *blank_merkel = "000000000000000000000000000000000000000000000000000
 static bool parse_notify(struct pool *pool, json_t *val)
 {
 	char *job_id, *prev_hash, *coinbase1, *coinbase2, *bbversion, *nbit,
-	     *ntime, *header;
+	     *ntime, *header, *superblock, *roundmask;
 	size_t cb1_len, cb2_len, alloc_len;
 	unsigned char *cb1, *cb2;
 	bool clean, ret = false;
@@ -1520,8 +1520,11 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	bbversion = json_array_string(val, 5);
 	nbit = json_array_string(val, 6);
 	ntime = json_array_string(val, 7);
-	clean = json_is_true(json_array_get(val, 8));
-
+    clean = json_is_true(json_array_get(val, 8));
+    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+       superblock = json_array_string(val, 9);
+       roundmask = json_array_string(val, 10);
+    }
 	if (!job_id || !prev_hash || !coinbase1 || !coinbase2 || !bbversion || !nbit || !ntime) {
 		/* Annoying but we must not leak memory */
 		if (job_id)
@@ -1538,6 +1541,17 @@ static bool parse_notify(struct pool *pool, json_t *val)
 			free(nbit);
 		if (ntime)
 			free(ntime);
+        if (superblock)
+            free(superblock);
+        if (roundmask)
+            free(roundmask);
+		goto out;
+	}
+	if (!superblock || !roundmask) {
+        if (superblock)
+            free(superblock);
+        if (roundmask)
+            free(roundmask);
 		goto out;
 	}
 
@@ -1547,6 +1561,8 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	free(pool->swork.bbversion);
 	free(pool->swork.nbit);
 	free(pool->swork.ntime);
+    free(pool->swork.r00);
+    free(pool->swork.r01);
 	pool->swork.job_id = job_id;
 	pool->swork.prev_hash = prev_hash;
 	cb1_len = strlen(coinbase1) / 2;
@@ -1555,6 +1571,10 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	pool->swork.nbit = nbit;
 	pool->swork.ntime = ntime;
 	pool->swork.clean = clean;
+    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+	   pool->swork.r00 = superblock;
+	   pool->swork.r01 = roundmask;
+    }
 	alloc_len = pool->swork.cb_len = cb1_len + pool->n1_len + pool->n2size + cb2_len;
 	pool->nonce2_offset = cb1_len + pool->n1_len;
 
@@ -1576,8 +1596,7 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	pool->swork.merkles = merkles;
 	if (clean)
 		pool->nonce2 = 0;
-	pool->merkle_offset = strlen(pool->swork.bbversion) +
-			      strlen(pool->swork.prev_hash);
+	pool->merkle_offset = strlen(pool->swork.bbversion) + strlen(pool->swork.prev_hash);
 	pool->swork.header_len = pool->merkle_offset +
 	/* merkle_hash */	 32 +
 				 strlen(pool->swork.ntime) +
@@ -1588,15 +1607,32 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	pool->swork.header_len = pool->swork.header_len * 2 + 1;
 	align_len(&pool->swork.header_len);
 	header = alloca(pool->swork.header_len);
-	snprintf(header, pool->swork.header_len,
-		"%s%s%s%s%s%s%s",
-		pool->swork.bbversion,
-		pool->swork.prev_hash,
-		blank_merkel,
-		pool->swork.ntime,
-		pool->swork.nbit,
-		"00000000", /* nonce */
-		workpadding1);
+
+    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+   	   snprintf(header, pool->swork.header_len,
+		    "%s%s%s%s%s%s%s%s%s",
+	    	pool->swork.bbversion,
+		    pool->swork.prev_hash,
+		    blank_merkel,
+		    pool->swork.ntime,
+		    pool->swork.nbit,
+		    "00000000", /* nonce */
+            pool->swork.r00,
+            pool->swork.r01,
+		    workpadding2);
+    }
+    else {
+   	   snprintf(header, pool->swork.header_len,
+		    "%s%s%s%s%s%s%s",
+	    	pool->swork.bbversion,
+		    pool->swork.prev_hash,
+		    blank_merkel,
+		    pool->swork.ntime,
+		    pool->swork.nbit,
+		    "00000000", /* nonce */
+		    workpadding1);
+    }
+
 	if (unlikely(!hex2bin(pool->header_bin, header, 128)))
 		quit(1, "Failed to convert header to header_bin in parse_notify");
 

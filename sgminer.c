@@ -1644,10 +1644,11 @@ void free_work(struct work *work)
 
 static void gen_hash(unsigned char *data, unsigned char *hash, int len);
 static void calc_diff(struct work *work, double known);
-char *workpadding1 = "0000000000000000000000800000000000000000000000000000000000000000000000000000000000000000c0020000";
+char *workpadding1 = "000000000000000000000080000000000000000000000000000000000000000000000000000000000000000080020000";
 char *workpadding2 = "000000800000000000000000000000000000000000000000000000000000000000000000c0020000";
 
 #ifdef HAVE_LIBCURL
+
 /* Process transactions with GBT by storing the binary value of the first
  * transaction, and the hashes of the remaining transactions since these
  * remain constant with an altered coinbase when generating work. Must be
@@ -1745,21 +1746,20 @@ static void update_gbt(struct pool *pool)
 	if (val) {
 		struct work *work = make_work();
 		bool rc = work_decode(pool, work, val);
-
 		total_getworks++;
 		pool->getwork_requested++;
 		if (rc) {
-			applog(LOG_DEBUG, "Successfully retrieved and updated GBT from %s", pool->poolname);
+			if (opt_debug) printf("Successfully retrieved and updated GBT from %s \n", pool->poolname);
 			cgtime(&pool->tv_idle);
 			if (pool == current_pool())
 				opt_work_update = true;
 		} else {
-			applog(LOG_DEBUG, "Successfully retrieved but FAILED to decipher GBT from %s", pool->poolname);
+			if (opt_debug) printf("Successfully retrieved but FAILED to decipher GBT from %s \n", pool->poolname);
 		}
 		json_decref(val);
 		free_work(work);
 	} else {
-		applog(LOG_DEBUG, "FAILED to update GBT from %s", pool->poolname);
+		if (opt_debug) printf("FAILED to update GBT from %s\n", pool->poolname);
 	}
 	curl_easy_cleanup(curl);
 }
@@ -1804,19 +1804,20 @@ static void gen_gbt_work(struct pool *pool, struct work *work)
 
 	flip32(work->data + 4 + 32, merkleroot);
 	free(merkleroot);
+
 	memset(work->data + 4 + 32 + 32 + 4 + 4, 0, 4); /* nonce */
 
     if (gpus[0].kernel == KL_JACKPOTCOIN) {
-	   hex2bin(work->data + 4 + 32 + 32 + 4 + 4 + 4 + 4 + 4, workpadding2, 40);
+	    hex2bin(work->data + 4 + 32 + 32 + 4 + 4 + 4 + 4 + 4, workpadding2, 40 + 0 + 0);
     }
     else {
- 	   hex2bin(work->data + 4 + 32 + 32 + 4 + 4 + 4, workpadding1, 48);
+ 	    hex2bin(work->data + 4 + 32 + 32 + 4 + 4 + 4 + 0 + 0, workpadding1, 48 + 4 + 4);
     }
 
 	if (opt_debug) {
 		char *header = bin2hex(work->data, 128);
-		applog(LOG_DEBUG, "Generated GBT header %s", header);
-		applog(LOG_DEBUG, "Work coinbase %s", work->coinbase);
+		printf("Generated GBT header %s\n", header);
+		printf("Work coinbase %s\n", work->coinbase);
 		free(header);
 	}
 
@@ -1836,6 +1837,7 @@ static void gen_gbt_work(struct pool *pool, struct work *work)
 
 static bool gbt_decode(struct pool *pool, json_t *res_val)
 {
+
 	const char *previousblockhash;
 	const char *target;
 	const char *coinbasetxn;
@@ -1865,7 +1867,7 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 	workid = json_string_value(json_object_get(res_val, "workid"));
     if (gpus[0].kernel == KL_JACKPOTCOIN) {
    	   superblock = json_integer_value(json_object_get(res_val, "superblock"));
-	   reserved = json_integer_value(json_object_get(res_val, "roundmask"));
+	   reserved   = json_integer_value(json_object_get(res_val, "roundmask"));
     }
 	if (!previousblockhash || !target || !coinbasetxn || !longpollid ||
 	    !expires || !version || !curtime || !bits) {
@@ -1873,19 +1875,20 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 		return false;
 	}
 
-	applog(LOG_DEBUG, "previousblockhash: %s", previousblockhash);
-	applog(LOG_DEBUG, "target: %s", target);
-	applog(LOG_DEBUG, "coinbasetxn: %s", coinbasetxn);
-	applog(LOG_DEBUG, "longpollid: %s", longpollid);
-	applog(LOG_DEBUG, "expires: %d", expires);
-	applog(LOG_DEBUG, "version: %d", version);
-	applog(LOG_DEBUG, "curtime: %d", curtime);
-	applog(LOG_DEBUG, "superblock: %d", superblock);
-	applog(LOG_DEBUG, "reserved: %d", reserved);
-	applog(LOG_DEBUG, "submitold: %s", submitold ? "true" : "false");
-	applog(LOG_DEBUG, "bits: %s", bits);
-	if (workid)
-		applog(LOG_DEBUG, "workid: %s", workid);
+    if (opt_debug) {
+	    printf("gbt_decode : previousblockhash: %s\n", previousblockhash);
+	    printf("gbt_decode : target: %s\n", target);
+	    printf("gbt_decode : coinbasetxn: %s\n", coinbasetxn);
+	    printf("gbt_decode : longpollid: %s\n", longpollid);
+	    printf("gbt_decode : expires: %d\n", expires);
+	    printf("gbt_decode : version: %d\n", version);
+	    printf("gbt_decode : curtime: %d\n", curtime);
+	    printf("gbt_decode : superblock: %d\n", superblock);
+	    printf("gbt_decode : roundmask: %d\n", reserved);
+	    printf("gbt_decode : submitold: %s\n", submitold ? "true" : "false");
+	    printf("gbt_decode : bits: %s\n", bits);
+	    printf("gbt_decode : workid: %s\n", workid);
+	}
 
 	cg_wlock(&pool->gbt_lock);
 	free(pool->coinbasetxn);
@@ -1932,7 +1935,7 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 
 	hex2bin((unsigned char *)&pool->gbt_bits, bits, 4);
 
-	__build_gbt_txns(pool, res_val);
+  __build_gbt_txns(pool, res_val);
 	cg_wunlock(&pool->gbt_lock);
 
 	return true;
@@ -2648,6 +2651,7 @@ static bool submit_upstream_work(struct work *work, CURL *curl, bool resubmit)
 
 	/* build JSON-RPC request */
 	if (work->gbt) {
+
 		char *gbt_block, *varint;
 		unsigned char data[88];
 
@@ -2656,21 +2660,20 @@ static bool submit_upstream_work(struct work *work, CURL *curl, bool resubmit)
 
 		if (work->gbt_txns < 0xfd) {
 			uint8_t val = work->gbt_txns;
-
 			varint = bin2hex((const unsigned char *)&val, 1);
 		} else if (work->gbt_txns <= 0xffff) {
 			uint16_t val = htole16(work->gbt_txns);
-
 			gbt_block = realloc_strcat(gbt_block, "fd");
 			varint = bin2hex((const unsigned char *)&val, 2);
 		} else {
 			uint32_t val = htole32(work->gbt_txns);
-
 			gbt_block = realloc_strcat(gbt_block, "fe");
 			varint = bin2hex((const unsigned char *)&val, 4);
 		}
 		gbt_block = realloc_strcat(gbt_block, varint);
+
 		free(varint);
+
 		gbt_block = realloc_strcat(gbt_block, work->coinbase);
 
 		s = strdup("{\"id\": 0, \"method\": \"submitblock\", \"params\": [\"");
@@ -2687,7 +2690,10 @@ static bool submit_upstream_work(struct work *work, CURL *curl, bool resubmit)
 		s = realloc_strcat(s, hexstr);
 		s = realloc_strcat(s, "\" ], \"id\":1}");
 	}
-	applog(LOG_DEBUG, "DBG: sending %s submit RPC call: %s", pool->rpc_url, s);
+
+	if (opt_debug) {
+	   printf("DBG: sending %s submit RPC call: %s", pool->rpc_url, s);
+	}
 	s = realloc_strcat(s, "\n");
 
 	cgtime(&tv_submit);
@@ -5399,12 +5405,10 @@ static void *stratum_rthread(void *userdata)
 		 * indefinitely or just bring it up when we switch to this
 		 * pool */
 		if (!sock_full(pool) && !cnx_needed(pool)) {
-			applog(LOG_INFO, "Suspending stratum on %s",
-			       pool->poolname);
+			applog(LOG_INFO, "Suspending stratum on %s", pool->poolname);
 			suspend_stratum(pool);
 			clear_stratum_shares(pool);
 			clear_pool_work(pool);
-
 			wait_lpcurrent(pool);
 			if (!restart_stratum(pool)) {
 				pool_died(pool);
@@ -5461,10 +5465,11 @@ static void *stratum_rthread(void *userdata)
 		 * has not had its idle flag cleared */
 		stratum_resumed(pool);
 
-		if (!parse_method(pool, s) && !parse_stratum_response(pool, s))
+  	    if (!parse_method(pool, s) && !parse_stratum_response(pool, s))
 			applog(LOG_INFO, "Unknown stratum msg: %s", s);
 		else if (pool->swork.clean) {
-			struct work *work = make_work();
+
+    		struct work *work = make_work();
 
 			/* Generate a single work item to update the current
 			 * block database */
@@ -6009,13 +6014,11 @@ static void gen_stratum_work(struct pool *pool, struct work *work)
 
 	if (opt_debug) {
 		char *header, *merkle_hash;
-
 		header = bin2hex(work->data, 128);
 		merkle_hash = bin2hex((const unsigned char *)merkle_root, 32);
-		applog(LOG_DEBUG, "Generated stratum merkle %s", merkle_hash);
-		applog(LOG_DEBUG, "Generated stratum header %s", header);
-		applog(LOG_DEBUG, "Work job_id %s nonce2 %"PRIu64" ntime %s", work->job_id,
-		       work->nonce2, work->ntime);
+		printf("Generated stratum merkle %s\n", merkle_hash);
+		printf("Generated stratum header %s\n", header);
+		printf("Work job_id %s nonce2 %"PRIu64" ntime %s\n", work->job_id, work->nonce2, work->ntime);
 		free(header);
 		free(merkle_hash);
 	}

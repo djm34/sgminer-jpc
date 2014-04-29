@@ -1183,6 +1183,8 @@ struct stratum_work {
 	char *bbversion;
 	char *nbit;
 	char *ntime;
+    char *r00;
+    char *r01;
 	bool clean;
 
 	size_t cb_len;
