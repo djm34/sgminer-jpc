@@ -1828,6 +1828,11 @@ bool parse_method(struct pool *pool, char *s)
 		return ret;
 	}
 
+    if (opt_debug) {
+      printf("\n received message from the server : %s \n", s);
+
+    }
+
 	if (!strncasecmp(buf, "mining.notify", 13)) {
 		if (parse_notify(pool, params))
 			pool->stratum_notify = ret = true;
