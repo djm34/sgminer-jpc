@@ -2,7 +2,7 @@
 #define __DEVICE_GPU_H__
 
 #include "miner.h"
-
+     
 
 extern void print_ndevs(int *ndevs);
 extern void *reinit_gpu(void *userdata);
