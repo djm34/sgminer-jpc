@@ -1521,7 +1521,7 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	nbit = json_array_string(val, 6);
 	ntime = json_array_string(val, 7);
     clean = json_is_true(json_array_get(val, 8));
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN ||  gpus[0].kernel == KL_JPC ) {
        superblock = json_array_string(val, 9);
        roundmask = json_array_string(val, 10);
     }
@@ -1571,7 +1571,7 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	pool->swork.nbit = nbit;
 	pool->swork.ntime = ntime;
 	pool->swork.clean = clean;
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN  ||  gpus[0].kernel == KL_JPC ) {
 	   pool->swork.r00 = superblock;
 	   pool->swork.r01 = roundmask;
     }
@@ -1608,7 +1608,7 @@ static bool parse_notify(struct pool *pool, json_t *val)
 	align_len(&pool->swork.header_len);
 	header = alloca(pool->swork.header_len);
 
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN ||  gpus[0].kernel == KL_JPC ) {
    	   snprintf(header, pool->swork.header_len,
 		    "%s%s%s%s%s%s%s%s%s",
 	    	pool->swork.bbversion,

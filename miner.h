@@ -382,6 +382,7 @@ enum cl_kernels {
 	KL_PSW,
 	KL_ZUIKKIS,
     KL_JACKPOTCOIN,
+	KL_JPC,
     KL_GIVECOIN,
 	KL_QUARKCOIN,	// kernels starting from this will have difficulty calculated by using quarkcoin algorithm
 	KL_QUBITCOIN,
@@ -393,6 +394,11 @@ enum cl_kernels {
 	KL_FUGUECOIN,
 	KL_GROESTLCOIN,
     KL_TWECOIN,
+	KL_MARUCOIN,
+	KL_X11MOD,
+	KL_X13MOD,
+	KL_X13MODOLD,
+	KL_NIST5
 };
 
 enum dev_reason {
@@ -516,6 +522,8 @@ struct cgpu_info {
 	int gpu_memdiff;
 	int gpu_powertune;
 	float gpu_vddc;
+	int gpu_engine_exit;
+	int gpu_memclock_exit;
 #endif
 	double diff1;
 	double diff_accepted;
@@ -1070,6 +1078,8 @@ extern void api(int thr_id);
 extern struct pool *current_pool(void);
 extern int enabled_pools;
 extern void get_intrange(char *arg, int *val1, int *val2);
+extern void get_intexitval(char *arg, int *val1, int *val2);
+extern void get_intrangeexitval(char *arg, int *val1, int *val2, int *val3);
 extern bool detect_stratum(struct pool *pool, char *url);
 extern void print_summary(void);
 extern void adjust_quota_gcd(void);

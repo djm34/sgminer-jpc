@@ -211,7 +211,69 @@ void patch_opcodes(char *w, unsigned remaining)
 		count_bfe_int, count_bfe_uint, count_byte_align);
 	applog(LOG_DEBUG, "Patched a total of %i BFI_INT instructions", patched);
 }
+#define CL_CREATE_KERNEL(name) \
+	clState->kernel_##name = clCreateKernel(clState->program, #name, &status); \
+	if (status != CL_SUCCESS) { \
+	    applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel #name)", status); \
+	    return NULL; \
+	}
 
+bool allocateHashBuffer(unsigned int gpu, _clState *clState) {
+	cl_int status;
+
+	struct cgpu_info *cgpu = &gpus[gpu];
+	unsigned int threads = 0;
+
+	while (threads < clState->wsize) {
+		if (cgpu->rawintensity > 0) {
+			threads = cgpu->rawintensity;
+		} else if (cgpu->xintensity > 0) {
+			threads = clState->compute_shaders * cgpu->xintensity;
+		} else {
+			threads = 1 << cgpu->intensity;
+		}
+		if (threads < clState->wsize) {
+			if (likely(cgpu->intensity < MAX_INTENSITY))
+				cgpu->intensity++;
+			else
+				threads = clState->wsize;
+		}
+	}
+
+	unsigned long int bufsize = (64 * threads);
+	unsigned long int flagSIZE = (sizeof(unsigned short) * threads);
+	if ((bufsize > cgpu->max_alloc) || (bufsize == 0)) {
+		applog(LOG_WARNING, "Maximum buffer memory device %d supports says %lu",
+			   gpu, (long unsigned int)(cgpu->max_alloc));
+		applog(LOG_WARNING, "Your settings come to %d", (int)bufsize);
+		return false;
+	}
+	applog(LOG_DEBUG, "Creating hash buffer sized %d", (int)bufsize);
+
+	clState->hash_buffer = NULL;
+	clState->hash_buffer = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, bufsize, NULL, &status);
+	if (status != CL_SUCCESS && !clState->hash_buffer) {
+		applog(LOG_ERR, "Error %d: clCreateBuffer (hash_buffer), decrease intensity/xintensity/rawintensity", status);
+		return false;
+	}
+
+	clState->flagR1 = NULL;
+	clState->flagR1 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, flagSIZE, NULL, &status);
+	if (status != CL_SUCCESS && !clState->flagR1) {
+		applog(LOG_ERR, "Error %d: clCreateBuffer (flagR1)", status);
+		return false;
+	}
+	
+	clState->flagR2 = NULL;
+	clState->flagR2 = clCreateBuffer(clState->context, CL_MEM_READ_WRITE, flagSIZE, NULL, &status);
+	if (status != CL_SUCCESS && !clState->flagR2) {
+		applog(LOG_ERR, "Error %d: clCreateBuffer (flagR2)", status);
+		return false;
+	}
+
+
+	return true;
+}
 _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 {
 	_clState *clState = calloc(1, sizeof(_clState));
@@ -321,6 +383,10 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 	/////////////////////////////////////////////////////////////////
 	// Create an OpenCL command queue
 	/////////////////////////////////////////////////////////////////
+	if ((cgpu->kernel == KL_X11MOD) || (cgpu->kernel == KL_X13MOD) || (cgpu->kernel == KL_NIST5) || (cgpu->kernel == KL_X13MODOLD) || (cgpu->kernel == KL_JPC) )
+		clState->commandQueue = clCreateCommandQueue(clState->context, devices[gpu],
+							     0, &status);
+	else
 	clState->commandQueue = clCreateCommandQueue(clState->context, devices[gpu],
 						     CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, &status);
 	if (status != CL_SUCCESS) /* Try again without OOE enable */
@@ -499,6 +565,31 @@ _clState *initCl(unsigned int gpu, char *name, size_t nameSize)
 			strcpy(filename, JACKPOTCOIN_KERNNAME".cl");
 			strcpy(binaryfilename, JACKPOTCOIN_KERNNAME);
 			break;
+         case KL_JPC:
+			applog(LOG_WARNING, "Kernel JPC is even more experimental.");
+			strcpy(filename, JPC_KERNNAME".cl");
+			strcpy(binaryfilename, JPC_KERNNAME);
+			break;
+        case KL_X11MOD:
+			applog(LOG_WARNING, "Kernel x11mod is experimental.");
+			strcpy(filename, X11MOD_KERNNAME".cl");
+			strcpy(binaryfilename, X11MOD_KERNNAME);
+			break;
+		case KL_X13MOD:
+			applog(LOG_WARNING, "Kernel x13mod is experimental.");
+			strcpy(filename, X13MOD_KERNNAME".cl");
+			strcpy(binaryfilename, X13MOD_KERNNAME);
+			break;
+        case KL_NIST5:
+			applog(LOG_WARNING, "Kernel nist5 is experimental.");
+			strcpy(filename, NIST5_KERNNAME".cl");
+			strcpy(binaryfilename, NIST5_KERNNAME);
+			break;
+		case KL_X13MODOLD:
+			applog(LOG_WARNING, "Kernel x13mod (AMD HD 5xxx/6xxx) is experimental.");
+			strcpy(filename, X13MOD_KERNNAME".cl");
+			strcpy(binaryfilename, X13MODOLD_KERNNAME);
+			break;
         case KL_GIVECOIN:
 			applog(LOG_WARNING, "Kernel GIVECOIN is experimental.");
 			strcpy(filename, GIVECOIN_KERNNAME".cl");
@@ -637,6 +728,11 @@ build:
 	/* create a cl program executable for all the devices specified */
 	char *CompilerOptions = calloc(1, 256);
 
+	if (clState->chosen_kernel == KL_X13MODOLD)
+		sprintf(CompilerOptions, "-I \"%s\" -I \"%s\" -I \"%skernel\" -I \".\" -D LOOKUP_GAP=%d -D CONCURRENT_THREADS=%d -D WORKSIZE=%d -D X13MODOLD",
+			opt_kernel_path, sgminer_path, sgminer_path,
+			cgpu->lookup_gap, (unsigned int)cgpu->thread_concurrency, (int)clState->wsize);
+	else
 	sprintf(CompilerOptions, "-I \"%s\" -I \"%s\" -I \"%skernel\" -I \".\" -D LOOKUP_GAP=%d -D CONCURRENT_THREADS=%d -D WORKSIZE=%d -O%d",
 			opt_kernel_path, sgminer_path, sgminer_path,
 			cgpu->lookup_gap, (unsigned int)cgpu->thread_concurrency, (int)clState->wsize, opt_clopt);
@@ -824,12 +920,83 @@ built:
 	}
 
 	/* get a kernel object handle for a kernel with the given name */
+if (clState->chosen_kernel == KL_X11MOD) {
+	    CL_CREATE_KERNEL(blake);
+	    CL_CREATE_KERNEL(bmw);
+	    CL_CREATE_KERNEL(groestl);
+	    CL_CREATE_KERNEL(skein);
+	    CL_CREATE_KERNEL(jh);
+	    CL_CREATE_KERNEL(keccak);
+	    CL_CREATE_KERNEL(luffa);
+	    CL_CREATE_KERNEL(cubehash);
+	    CL_CREATE_KERNEL(shavite);
+	    CL_CREATE_KERNEL(simd);
+	    CL_CREATE_KERNEL(echo);
+	} 
+else if (clState->chosen_kernel == KL_JPC) {
+	    CL_CREATE_KERNEL(keccak);
+	    CL_CREATE_KERNEL(groestl1);
+	    CL_CREATE_KERNEL(skein1);
+	    CL_CREATE_KERNEL(blake1);
+	    CL_CREATE_KERNEL(jh1);
+		CL_CREATE_KERNEL(groestl2);
+	    CL_CREATE_KERNEL(skein2);
+	    CL_CREATE_KERNEL(blake2);
+	    CL_CREATE_KERNEL(jh2);
+		CL_CREATE_KERNEL(groestl3);
+	    CL_CREATE_KERNEL(skein3);
+	    CL_CREATE_KERNEL(blake3);
+	    CL_CREATE_KERNEL(jh3);
+		CL_CREATE_KERNEL(finale);
+	} 
+	else if (clState->chosen_kernel == KL_X13MOD) {
+	    CL_CREATE_KERNEL(blake);
+	    CL_CREATE_KERNEL(bmw);
+	    CL_CREATE_KERNEL(groestl);
+	    CL_CREATE_KERNEL(skein);
+	    CL_CREATE_KERNEL(jh);
+	    CL_CREATE_KERNEL(keccak);
+	    CL_CREATE_KERNEL(luffa);
+	    CL_CREATE_KERNEL(cubehash);
+	    CL_CREATE_KERNEL(shavite);
+	    CL_CREATE_KERNEL(simd);
+	    CL_CREATE_KERNEL(echo);
+	    CL_CREATE_KERNEL(hamsi);
+	    CL_CREATE_KERNEL(fugue);
+	}
+	else if (clState->chosen_kernel == KL_NIST5) {
+	    CL_CREATE_KERNEL(blake);
+	    CL_CREATE_KERNEL(groestl);
+	    CL_CREATE_KERNEL(jh);
+	    CL_CREATE_KERNEL(keccak);
+	    CL_CREATE_KERNEL(skein);
+	}
+	else if (clState->chosen_kernel == KL_X13MODOLD) {
+	    CL_CREATE_KERNEL(blake);
+	    CL_CREATE_KERNEL(bmw);
+	    CL_CREATE_KERNEL(groestl);
+	    CL_CREATE_KERNEL(skein);
+	    CL_CREATE_KERNEL(jh);
+	    CL_CREATE_KERNEL(keccak);
+	    CL_CREATE_KERNEL(luffa);
+	    CL_CREATE_KERNEL(cubehash);
+	    CL_CREATE_KERNEL(shavite);
+	    CL_CREATE_KERNEL(simd);
+	    CL_CREATE_KERNEL(echo_hamsi_fugue);
+	}
+	else {
 	clState->kernel = clCreateKernel(clState->program, "search", &status);
 	if (status != CL_SUCCESS) {
 		applog(LOG_ERR, "Error %d: Creating Kernel from program. (clCreateKernel)", status);
 		return NULL;
 	}
+	}
 
+	if ((cgpu->kernel == KL_X11MOD) || (cgpu->kernel == KL_X13MOD) || (cgpu->kernel == KL_NIST5) || (cgpu->kernel == KL_X13MODOLD) || (cgpu->kernel == KL_JPC)) {
+		if (!allocateHashBuffer(gpu, clState))
+			return NULL;
+	}
+	else {
 	size_t ipt = (1024 / cgpu->lookup_gap + (1024 % cgpu->lookup_gap > 0));
 	size_t bufsize = 128 * ipt * cgpu->thread_concurrency;
 
@@ -852,7 +1019,7 @@ built:
 		applog(LOG_ERR, "Error %d: clCreateBuffer (padbuffer8), decrease TC or increase LG", status);
 		return NULL;
 	}
-
+	}
 	clState->CLbuffer0 = clCreateBuffer(clState->context, CL_MEM_READ_ONLY, 128, NULL, &status);
 	if (status != CL_SUCCESS) {
 		applog(LOG_ERR, "Error %d: clCreateBuffer (CLbuffer0)", status);

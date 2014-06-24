@@ -34,6 +34,26 @@
 #include "adl.h"
 #include "util.h"
 
+#define CL_CHECK(_expr) \
+    do { \
+        cl_int _err = _expr; \
+        if (_err == CL_SUCCESS) \
+            break; \
+        applog(LOG_ERR, "OpenCL Error: '%s' returned %d!\n", #_expr, (int)_err); \
+        abort(); \
+    } while (0)
+
+#define CL_CHECK_ERR(_expr) \
+    ({ \
+        cl_int _err = CL_INVALID_VALUE; \
+        typeof(_expr) _ret = _expr; \
+        if (_err != CL_SUCCESS) { \
+            applog(LOG_ERR, "OpenCL Error: '%s' returned %d!\n", #_expr, (int)_err); \
+            abort(); \
+        } \
+        _ret; \
+    })
+
 /* TODO: cleanup externals ********************/
 
 #ifdef HAVE_CURSES
@@ -208,6 +228,8 @@ static enum cl_kernels select_kernel(char *arg) {
 		return KL_PSW;
 	if (!strcmp(arg, DARKCOIN_KERNNAME))
 		return KL_DARKCOIN;
+	if (!strcmp(arg, X11MOD_KERNNAME))
+		return KL_X11MOD;
 	if (!strcmp(arg, QUBITCOIN_KERNNAME))
 		return KL_QUBITCOIN;
 	if (!strcmp(arg, QUARKCOIN_KERNNAME))
@@ -228,8 +250,18 @@ static enum cl_kernels select_kernel(char *arg) {
 		return KL_TWECOIN;
 	if (!strcmp(arg, JACKPOTCOIN_KERNNAME))
 		return KL_JACKPOTCOIN;
+	if (!strcmp(arg, JPC_KERNNAME))
+		return KL_JPC;
 	if (!strcmp(arg, GIVECOIN_KERNNAME))
 		return KL_GIVECOIN;
+	if (!strcmp(arg, MARUCOIN_KERNNAME))
+		return KL_MARUCOIN;
+	if (!strcmp(arg, X13MOD_KERNNAME))
+		return KL_X13MOD;
+	if (!strcmp(arg, X13MODOLD_KERNNAME))
+		return KL_X13MODOLD;
+	if (!strcmp(arg, NIST5_KERNNAME))
+		return KL_NIST5;
 	return KL_NONE;
 }
 
@@ -330,26 +362,28 @@ char *set_gpu_threads(char *arg)
 
 char *set_gpu_engine(char *arg)
 {
-	int i, val1 = 0, val2 = 0, device = 0;
+	int i, min_val = 0, gpu_val = 0, exit_val = 0, device = 0;
 	char *nextptr;
 
 	nextptr = strtok(arg, ",");
 	if (nextptr == NULL)
 		return "Invalid parameters for set gpu engine";
-	get_intrange(nextptr, &val1, &val2);
-	if (val1 < 0 || val1 > 9999 || val2 < 0 || val2 > 9999)
+	get_intrangeexitval(nextptr, &min_val, &gpu_val, &exit_val); 
+	if (min_val < 0 || min_val > 9999 || gpu_val < 0 || gpu_val > 9999 || exit_val < 0 || exit_val > 9999)
 		return "Invalid value passed to set_gpu_engine";
 
-	gpus[device].min_engine = val1;
-	gpus[device].gpu_engine = val2;
+	gpus[device].min_engine = min_val;
+	gpus[device].gpu_engine = gpu_val;
+	gpus[device].gpu_engine_exit = exit_val;
 	device++;
 
 	while ((nextptr = strtok(NULL, ",")) != NULL) {
-		get_intrange(nextptr, &val1, &val2);
-		if (val1 < 0 || val1 > 9999 || val2 < 0 || val2 > 9999)
+		get_intrangeexitval(nextptr, &min_val, &gpu_val, &exit_val);
+		if (min_val < 0 || min_val > 9999 || gpu_val < 0 || gpu_val > 9999 || exit_val < 0 || exit_val > 9999)
 			return "Invalid value passed to set_gpu_engine";
-		gpus[device].min_engine = val1;
-		gpus[device].gpu_engine = val2;
+		gpus[device].min_engine = min_val;
+		gpus[device].gpu_engine = gpu_val;
+		gpus[device].gpu_engine_exit = exit_val;
 		device++;
 	}
 
@@ -357,6 +391,7 @@ char *set_gpu_engine(char *arg)
 		for (i = 1; i < MAX_GPUDEVICES; i++) {
 			gpus[i].min_engine = gpus[0].min_engine;
 			gpus[i].gpu_engine = gpus[0].gpu_engine;
+			gpus[i].gpu_engine_exit = gpus[0].gpu_engine_exit;
 		}
 	}
 
@@ -752,6 +787,8 @@ void pause_dynamic_threads(int gpu)
 	}
 }
 
+static _clState *clStates[MAX_GPUDEVICES];
+
 #if defined(HAVE_CURSES)
 void manage_gpu(void)
 {
@@ -909,6 +946,7 @@ retry: // TODO: refactor
 		gpus[selected].deven = DEV_DISABLED;
 		goto retry;
 	} else if (!strncasecmp(&input, "i", 1)) {
+		struct cgpu_info *cgpu;
 		int intensity;
 		char *intvar;
 
@@ -939,14 +977,46 @@ retry: // TODO: refactor
 			wlogprint("Invalid selection\n");
 			goto retry;
 		}
+
+		bool tdymanic = gpus[selected].dynamic;
+		int tintensity = gpus[selected].intensity;
+		int txintensity = gpus[selected].xintensity;
+		int trawintensity = gpus[selected].rawintensity;
+
 		gpus[selected].dynamic = false;
 		gpus[selected].intensity = intensity;
 		gpus[selected].xintensity = 0; // Disable xintensity when enabling intensity
 		gpus[selected].rawintensity = 0; // Disable raw intensity when enabling intensity
+
+		if ((gpus[selected].kernel == KL_X11MOD) || (gpus[selected].kernel == KL_X13MOD) || (gpus[selected].kernel == KL_NIST5) || (gpus[selected].kernel == KL_X13MODOLD)|| (gpus[selected].kernel == KL_JPC)) {
+			for (i = 0; i < mining_threads; ++i) {
+				thr = get_thread(i);
+				cgpu = thr->cgpu;
+				if (cgpu->drv->drv_id != DRIVER_opencl)
+					continue;
+				if (dev_from_id(i) != selected)
+					continue;
+				if (allocateHashBuffer(selected, clStates[thr->id])) {
+				    wlogprint("Intensity on gpu %d set to %d\n", selected, intensity);
+				    applog(LOG_DEBUG, "Pushing sem post to thread %d", thr->id);
+				    cgsem_post(&thr->sem);
+				    pause_dynamic_threads(selected);
+				}
+				else {
+				    gpus[selected].dynamic = tdymanic;
+				    gpus[selected].intensity = tintensity;
+				    gpus[selected].xintensity = txintensity;
+				    gpus[selected].rawintensity = trawintensity;
+				}
+			}
+		}
+		else {		
 		wlogprint("Intensity on gpu %d set to %d\n", selected, intensity);
 		pause_dynamic_threads(selected);
+		}
 		goto retry;
 	} else if (!strncasecmp(&input, "x", 1)) {
+		struct cgpu_info *cgpu;
 		int xintensity;
 		char *intvar;
 
@@ -968,14 +1038,45 @@ retry: // TODO: refactor
 			wlogprint("Invalid selection\n");
 			goto retry;
 		}
+		bool tdymanic = gpus[selected].dynamic;
+		int tintensity = gpus[selected].intensity;
+		int txintensity = gpus[selected].xintensity;
+		int trawintensity = gpus[selected].rawintensity;
+
 		gpus[selected].dynamic = false;
 		gpus[selected].intensity = 0; // Disable intensity when enabling xintensity
 		gpus[selected].rawintensity = 0; // Disable raw intensity when enabling xintensity
 		gpus[selected].xintensity = xintensity;
+
+		if ((gpus[selected].kernel == KL_X11MOD) || (gpus[selected].kernel == KL_X13MOD) || (gpus[selected].kernel == KL_NIST5) || (gpus[selected].kernel == KL_JPC) || (gpus[selected].kernel == KL_X13MODOLD)) {
+			for (i = 0; i < mining_threads; ++i) {
+				thr = get_thread(i);
+				cgpu = thr->cgpu;
+				if (cgpu->drv->drv_id != DRIVER_opencl)
+					continue;
+				if (dev_from_id(i) != selected)
+					continue;
+				if (allocateHashBuffer(selected, clStates[thr->id])) {
+				    wlogprint("Experimental intensity on gpu %d set to %d\n", selected, xintensity);
+				    applog(LOG_DEBUG, "Pushing sem post to thread %d", thr->id);
+				    cgsem_post(&thr->sem);
+				    pause_dynamic_threads(selected);
+				}
+				else {
+				    gpus[selected].dynamic = tdymanic;
+				    gpus[selected].intensity = tintensity;
+				    gpus[selected].xintensity = txintensity;
+				    gpus[selected].rawintensity = trawintensity;
+				}
+			}
+		}
+		else {
 		wlogprint("Experimental intensity on gpu %d set to %d\n", selected, xintensity);
 		pause_dynamic_threads(selected);
+		}
 		goto retry;
 	} else if (!strncasecmp(&input, "a", 1)) {
+		struct cgpu_info *cgpu;
 		int rawintensity;
 		char *intvar;
 
@@ -997,12 +1098,43 @@ retry: // TODO: refactor
 		  wlogprint("Invalid selection\n");
 		  goto retry;
 		}
+
+		bool tdymanic = gpus[selected].dynamic;
+		int tintensity = gpus[selected].intensity;
+		int txintensity = gpus[selected].xintensity;
+		int trawintensity = gpus[selected].rawintensity;
+
 		gpus[selected].dynamic = false;
 		gpus[selected].intensity = 0; // Disable intensity when enabling raw intensity
 		gpus[selected].xintensity = 0; // Disable xintensity when enabling raw intensity
 		gpus[selected].rawintensity = rawintensity;
+
+		if ((gpus[selected].kernel == KL_X11MOD) || (gpus[selected].kernel == KL_X13MOD) || (gpus[selected].kernel == KL_NIST5) || (gpus[selected].kernel == KL_X13MODOLD)) {
+			for (i = 0; i < mining_threads; ++i) {
+				thr = get_thread(i);
+				cgpu = thr->cgpu;
+				if (cgpu->drv->drv_id != DRIVER_opencl)
+					continue;
+				if (dev_from_id(i) != selected)
+					continue;
+				if (allocateHashBuffer(selected, clStates[thr->id])) {
+				    wlogprint("Raw ntensity on gpu %d set to %d\n", selected, rawintensity);
+				    applog(LOG_DEBUG, "Pushing sem post to thread %d", thr->id);
+				    cgsem_post(&thr->sem);
+				    pause_dynamic_threads(selected);
+				}
+				else {
+				    gpus[selected].dynamic = tdymanic;
+				    gpus[selected].intensity = tintensity;
+				    gpus[selected].xintensity = txintensity;
+				    gpus[selected].rawintensity = trawintensity;
+				}
+			}
+		}
+		else {
 		wlogprint("Raw intensity on gpu %d set to %d\n", selected, rawintensity);
 		pause_dynamic_threads(selected);
+		}
 		goto retry;
 	} else if (!strncasecmp(&input, "r", 1)) {
 		if (selected)
@@ -1040,6 +1172,7 @@ static _clState *clStates[MAX_GPUDEVICES];
 #define CL_SET_BLKARG(blkvar) status |= clSetKernelArg(*kernel, num++, sizeof(uint), (void *)&blk->blkvar)
 #define CL_SET_ARG(var) status |= clSetKernelArg(*kernel, num++, sizeof(var), (void *)&var)
 #define CL_SET_VARG(args, var) status |= clSetKernelArg(*kernel, num++, args * sizeof(uint), (void *)var)
+#define CL_SET_ARG_N(n,var) status |= clSetKernelArg(*kernel, n, sizeof(var), (void *)&var)
 
 static cl_int queue_scrypt_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
 {
@@ -1098,6 +1231,262 @@ static cl_int queue_sph_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unus
 	CL_SET_ARG(clState->CLbuffer0);
 	CL_SET_ARG(clState->outputBuffer);
 	CL_SET_ARG(le_target);
+
+	return status;
+}
+
+static cl_int queue_x11mod_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+	unsigned char *midstate = blk->work->midstate;
+	cl_kernel *kernel;
+	unsigned int num = 0;
+	cl_ulong le_target;
+	cl_int status = 0;
+
+	le_target = *(cl_ulong *)(blk->work->device_target + 24);
+	flip80(clState->cldata, blk->work->data);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL,NULL);
+
+//clbuffer, hashes
+	kernel = &clState->kernel_blake;
+	CL_SET_ARG_N(0,clState->CLbuffer0);
+	CL_SET_ARG_N(1,clState->hash_buffer);
+	kernel = &clState->kernel_bmw;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_groestl;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_skein;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_jh;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_keccak;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_luffa;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_cubehash;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_shavite;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_simd;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+//hashes, output, target
+	kernel = &clState->kernel_echo;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->outputBuffer);
+	CL_SET_ARG_N(2,le_target);
+
+	return status;
+}
+
+static cl_int queue_nist5_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+	unsigned char *midstate = blk->work->midstate;
+	cl_kernel *kernel;
+	unsigned int num = 0;
+	cl_ulong le_target;
+	cl_int status = 0;
+
+	le_target = *(cl_ulong *)(blk->work->device_target + 24);
+	flip80(clState->cldata, blk->work->data);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL,NULL);
+
+//clbuffer, hashes
+	kernel = &clState->kernel_blake;
+	CL_SET_ARG_N(0,clState->CLbuffer0);
+	CL_SET_ARG_N(1,clState->hash_buffer);
+	kernel = &clState->kernel_groestl;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_jh;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_keccak;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	//hashes, output, target
+	kernel = &clState->kernel_skein;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->outputBuffer);
+	CL_SET_ARG_N(2,le_target);
+
+	return status;
+}
+
+static cl_int queue_jpc_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+	unsigned char *midstate = blk->work->midstate;
+	cl_kernel *kernel;
+	unsigned int num = 0;
+	cl_ulong le_target;
+	cl_int status = 0;
+	
+
+    le_target = *(cl_ulong *)(blk->work->device_target + 24);
+	flip80(clState->cldata, blk->work->data);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL,NULL);
+	
+
+if (opt_debughash) {
+       unsigned char * ptr = (unsigned char *)(blk->work->device_target);
+       int i;
+       printf("\n SPH Kernel : ");
+       for (i = 0; i < 32; i++) printf(" %02x", (unsigned char)(ptr[i]));
+       printf("\n");
+       ptr = (unsigned char *)(blk->work->data);
+       printf("\n SPH Kernel Data : ");
+       for (i = 0; i < 88; i++) printf(" %02x", (unsigned char)(ptr[i]));
+       printf("\n");
+    }
+   
+
+//clbuffer, hashes
+	kernel = &clState->kernel_keccak;
+	CL_SET_ARG_N(0,clState->CLbuffer0);
+	CL_SET_ARG_N(1,clState->hash_buffer);	   
+
+	kernel = &clState->kernel_groestl1;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_skein1;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_blake1;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_jh1;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+
+
+	kernel = &clState->kernel_groestl2;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+    CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_skein2;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_blake2;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_jh2;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+
+
+	kernel = &clState->kernel_groestl3;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_skein3;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+	kernel = &clState->kernel_blake3;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+    kernel = &clState->kernel_jh3;	
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->flagR1);
+	CL_SET_ARG_N(2,clState->flagR2);
+
+	kernel  = &clState->kernel_finale;	
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->outputBuffer);
+	CL_SET_ARG_N(2,le_target);
+	CL_SET_ARG_N(3,clState->flagR2);
+	return status;
+}
+static cl_int queue_x13mod_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+	unsigned char *midstate = blk->work->midstate;
+	cl_kernel *kernel;
+	unsigned int num = 0;
+	cl_ulong le_target;
+	cl_int status = 0;
+
+	le_target = *(cl_ulong *)(blk->work->device_target + 24);
+	flip80(clState->cldata, blk->work->data);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL,NULL);
+
+//clbuffer, hashes
+	kernel = &clState->kernel_blake;
+	CL_SET_ARG_N(0,clState->CLbuffer0);
+	CL_SET_ARG_N(1,clState->hash_buffer);
+	kernel = &clState->kernel_bmw;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_groestl;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_skein;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_jh;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_keccak;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_luffa;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_cubehash;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_shavite;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_simd;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_echo;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_hamsi;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+//hashes, output, target
+	kernel = &clState->kernel_fugue;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->outputBuffer);
+	CL_SET_ARG_N(2,le_target);
+
+	return status;
+}
+
+static cl_int queue_x13modold_kernel(_clState *clState, dev_blk_ctx *blk, __maybe_unused cl_uint threads)
+{
+	unsigned char *midstate = blk->work->midstate;
+	cl_kernel *kernel;
+	unsigned int num = 0;
+	cl_ulong le_target;
+	cl_int status = 0;
+
+	le_target = *(cl_ulong *)(blk->work->device_target + 24);
+	flip80(clState->cldata, blk->work->data);
+	status = clEnqueueWriteBuffer(clState->commandQueue, clState->CLbuffer0, true, 0, 80, clState->cldata, 0, NULL,NULL);
+
+//clbuffer, hashes
+	kernel = &clState->kernel_blake;
+	CL_SET_ARG_N(0,clState->CLbuffer0);
+	CL_SET_ARG_N(1,clState->hash_buffer);
+	kernel = &clState->kernel_bmw;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_groestl;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_skein;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_jh;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_keccak;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_luffa;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_cubehash;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_shavite;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	kernel = &clState->kernel_simd;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+//hashes, output, target
+	kernel = &clState->kernel_echo_hamsi_fugue;
+	CL_SET_ARG_N(0,clState->hash_buffer);
+	CL_SET_ARG_N(1,clState->outputBuffer);
+	CL_SET_ARG_N(2,le_target);
 
 	return status;
 }
@@ -1422,9 +1811,27 @@ static bool opencl_thread_prepare(struct thr_info *thr)
             case KL_JACKPOTCOIN:
                 cgpu->kname = JACKPOTCOIN_KERNNAME;
                 break;
+			case KL_JPC:
+                cgpu->kname = JPC_KERNNAME;
+                break;
             case KL_GIVECOIN:
 				cgpu->kname = GIVECOIN_KERNNAME;
                 break;
+            case KL_MARUCOIN:
+				cgpu->kname = MARUCOIN_KERNNAME;
+				break;
+			case KL_X11MOD:
+				cgpu->kname = X11MOD_KERNNAME;
+				break;
+			case KL_X13MOD:
+				cgpu->kname = X13MOD_KERNNAME;
+				break;
+			case KL_X13MODOLD:
+				cgpu->kname = X13MOD_KERNNAME;
+				break;
+            case KL_NIST5:
+				cgpu->kname = NIST5_KERNNAME;
+				break;
 			default:
 				break;
 		}
@@ -1453,6 +1860,21 @@ static bool opencl_thread_init(struct thr_info *thr)
 	}
 
 	switch (clState->chosen_kernel) {
+    case KL_X11MOD:
+		thrdata->queue_kernel_parameters = &queue_x11mod_kernel;
+		break;
+	case KL_X13MOD:
+		thrdata->queue_kernel_parameters = &queue_x13mod_kernel;
+		break;
+    case KL_NIST5:
+		thrdata->queue_kernel_parameters = &queue_nist5_kernel;
+		break;
+    case KL_JPC:
+		thrdata->queue_kernel_parameters = &queue_jpc_kernel;
+		break;
+	case KL_X13MODOLD:
+		thrdata->queue_kernel_parameters = &queue_x13modold_kernel;
+		break;
 	case KL_ALEXKARNEW:
 	case KL_ALEXKAROLD:
 	case KL_CKOLIVAS:
@@ -1469,6 +1891,9 @@ static bool opencl_thread_init(struct thr_info *thr)
 	case KL_ANIMECOIN:
 	case KL_GROESTLCOIN:
     case KL_JACKPOTCOIN:
+    case KL_SIFCOIN:
+	case KL_TWECOIN:
+	case KL_MARUCOIN:
     case KL_GIVECOIN:
 		thrdata->queue_kernel_parameters = &queue_sph_kernel;
 		break;
@@ -1507,6 +1932,14 @@ static bool opencl_prepare_work(struct thr_info __maybe_unused *thr, struct work
 }
 
 extern int opt_dynamic_interval;
+
+#define CL_ENQUEUE_KERNEL(KL, GWO) \
+	status = clEnqueueNDRangeKernel(clState->commandQueue, clState->kernel_##KL, 1, GWO, globalThreads, localThreads, 0, NULL, NULL); \
+	if (unlikely(status != CL_SUCCESS)) { \
+	    applog(LOG_ERR, "Error %d: Enqueueing kernel %s onto command queue. (clEnqueueNDRangeKernel)", status, #KL); \
+	    return -1; \
+	}
+
 
 static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
 				int64_t __maybe_unused max_nonce)
@@ -1553,7 +1986,164 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
 		applog(LOG_ERR, "Error: clSetKernelArg of all params failed.");
 		return -1;
 	}
+	if (clState->chosen_kernel == KL_X11MOD) {
+	    if (clState->goffset) {
+		size_t global_work_offset[1];
+		global_work_offset[0] = work->blk.nonce;
 
+		CL_ENQUEUE_KERNEL(blake, global_work_offset);
+		CL_ENQUEUE_KERNEL(bmw, global_work_offset);
+		CL_ENQUEUE_KERNEL(groestl, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein, global_work_offset);
+		CL_ENQUEUE_KERNEL(jh, global_work_offset);
+		CL_ENQUEUE_KERNEL(keccak, global_work_offset);
+		CL_ENQUEUE_KERNEL(luffa, global_work_offset);
+		CL_ENQUEUE_KERNEL(cubehash, global_work_offset);
+		CL_ENQUEUE_KERNEL(shavite, global_work_offset);
+		CL_ENQUEUE_KERNEL(simd, global_work_offset)
+		CL_ENQUEUE_KERNEL(echo, global_work_offset);
+	    }
+	    else {
+		CL_ENQUEUE_KERNEL(blake, NULL);
+		CL_ENQUEUE_KERNEL(bmw, NULL);
+		CL_ENQUEUE_KERNEL(groestl, NULL);
+		CL_ENQUEUE_KERNEL(skein, NULL);
+		CL_ENQUEUE_KERNEL(jh, NULL);
+		CL_ENQUEUE_KERNEL(keccak, NULL);
+		CL_ENQUEUE_KERNEL(luffa, NULL);
+		CL_ENQUEUE_KERNEL(cubehash, NULL);
+		CL_ENQUEUE_KERNEL(shavite, NULL);
+		CL_ENQUEUE_KERNEL(simd, NULL)
+		CL_ENQUEUE_KERNEL(echo, NULL);
+            }
+	}
+	else if (clState->chosen_kernel == KL_X13MOD) {
+	    if (clState->goffset) {
+		size_t global_work_offset[1];
+		global_work_offset[0] = work->blk.nonce;
+
+		CL_ENQUEUE_KERNEL(blake, global_work_offset);
+		CL_ENQUEUE_KERNEL(bmw, global_work_offset);
+		CL_ENQUEUE_KERNEL(groestl, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein, global_work_offset);
+		CL_ENQUEUE_KERNEL(jh, global_work_offset);
+		CL_ENQUEUE_KERNEL(keccak, global_work_offset);
+		CL_ENQUEUE_KERNEL(luffa, global_work_offset);
+		CL_ENQUEUE_KERNEL(cubehash, global_work_offset);
+		CL_ENQUEUE_KERNEL(shavite, global_work_offset);
+		CL_ENQUEUE_KERNEL(simd, global_work_offset)
+		CL_ENQUEUE_KERNEL(echo, global_work_offset);
+		CL_ENQUEUE_KERNEL(hamsi, global_work_offset);
+		CL_ENQUEUE_KERNEL(fugue, global_work_offset);
+	    }
+	    else {
+		CL_ENQUEUE_KERNEL(blake, NULL);
+		CL_ENQUEUE_KERNEL(bmw, NULL);
+		CL_ENQUEUE_KERNEL(groestl, NULL);
+		CL_ENQUEUE_KERNEL(skein, NULL);
+		CL_ENQUEUE_KERNEL(jh, NULL);
+		CL_ENQUEUE_KERNEL(keccak, NULL);
+		CL_ENQUEUE_KERNEL(luffa, NULL);
+		CL_ENQUEUE_KERNEL(cubehash, NULL);
+		CL_ENQUEUE_KERNEL(shavite, NULL);
+		CL_ENQUEUE_KERNEL(simd, NULL)
+		CL_ENQUEUE_KERNEL(echo, NULL);
+		CL_ENQUEUE_KERNEL(hamsi, NULL);
+		CL_ENQUEUE_KERNEL(fugue, NULL);
+            }
+	}
+	else if (clState->chosen_kernel == KL_NIST5) {
+	    if (clState->goffset) {
+		size_t global_work_offset[1];
+		global_work_offset[0] = work->blk.nonce;
+		CL_ENQUEUE_KERNEL(blake, global_work_offset);
+		CL_ENQUEUE_KERNEL(groestl, global_work_offset);
+		CL_ENQUEUE_KERNEL(jh, global_work_offset);
+		CL_ENQUEUE_KERNEL(keccak, global_work_offset);
+        CL_ENQUEUE_KERNEL(skein, global_work_offset);
+	    }
+	    else {
+		CL_ENQUEUE_KERNEL(blake, NULL);
+		CL_ENQUEUE_KERNEL(groestl, NULL);
+		CL_ENQUEUE_KERNEL(jh, NULL);
+		CL_ENQUEUE_KERNEL(keccak, NULL);
+        CL_ENQUEUE_KERNEL(skein, NULL);
+            }
+	}
+	else if (clState->chosen_kernel == KL_JPC) {
+	    if (clState->goffset) {
+		size_t global_work_offset[1];
+		global_work_offset[0] = work->blk.nonce;
+		CL_ENQUEUE_KERNEL(keccak, global_work_offset);	
+
+		CL_ENQUEUE_KERNEL(groestl1, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein1, global_work_offset);
+		CL_ENQUEUE_KERNEL(blake1, global_work_offset);
+        CL_ENQUEUE_KERNEL(jh1, global_work_offset);
+
+		CL_ENQUEUE_KERNEL(groestl2, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein2, global_work_offset);
+		CL_ENQUEUE_KERNEL(blake2, global_work_offset);
+        CL_ENQUEUE_KERNEL(jh2, global_work_offset);
+
+		CL_ENQUEUE_KERNEL(groestl3, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein3, global_work_offset);
+		CL_ENQUEUE_KERNEL(blake3, global_work_offset);
+        CL_ENQUEUE_KERNEL(jh3, global_work_offset);
+		CL_ENQUEUE_KERNEL(finale, global_work_offset);
+	    }
+	    else {
+		CL_ENQUEUE_KERNEL(keccak, NULL);		
+
+		CL_ENQUEUE_KERNEL(groestl1, NULL);
+		CL_ENQUEUE_KERNEL(skein1, NULL);
+		CL_ENQUEUE_KERNEL(blake1, NULL);
+		CL_ENQUEUE_KERNEL(jh1, NULL);
+			
+		CL_ENQUEUE_KERNEL(groestl2, NULL);
+		CL_ENQUEUE_KERNEL(skein2, NULL);
+		CL_ENQUEUE_KERNEL(blake2, NULL);
+		CL_ENQUEUE_KERNEL(jh2, NULL);
+		
+		CL_ENQUEUE_KERNEL(groestl3, NULL);
+		CL_ENQUEUE_KERNEL(skein3, NULL);
+		CL_ENQUEUE_KERNEL(blake3, NULL);
+		CL_ENQUEUE_KERNEL(jh3, NULL);
+		CL_ENQUEUE_KERNEL(finale, NULL);
+		}
+	}
+	else if (clState->chosen_kernel == KL_X13MODOLD) {
+	    if (clState->goffset) {
+		size_t global_work_offset[1];
+		global_work_offset[0] = work->blk.nonce;
+
+		CL_ENQUEUE_KERNEL(blake, global_work_offset);
+		CL_ENQUEUE_KERNEL(bmw, global_work_offset);
+		CL_ENQUEUE_KERNEL(groestl, global_work_offset);
+		CL_ENQUEUE_KERNEL(skein, global_work_offset);
+		CL_ENQUEUE_KERNEL(jh, global_work_offset);
+		CL_ENQUEUE_KERNEL(keccak, global_work_offset);
+		CL_ENQUEUE_KERNEL(luffa, global_work_offset);
+		CL_ENQUEUE_KERNEL(cubehash, global_work_offset);
+		CL_ENQUEUE_KERNEL(shavite, global_work_offset);
+		CL_ENQUEUE_KERNEL(simd, global_work_offset)
+		CL_ENQUEUE_KERNEL(echo_hamsi_fugue, global_work_offset);
+	    }
+	    else {
+		CL_ENQUEUE_KERNEL(blake, NULL);
+		CL_ENQUEUE_KERNEL(bmw, NULL);
+		CL_ENQUEUE_KERNEL(groestl, NULL);
+		CL_ENQUEUE_KERNEL(skein, NULL);
+		CL_ENQUEUE_KERNEL(jh, NULL);
+		CL_ENQUEUE_KERNEL(keccak, NULL);
+		CL_ENQUEUE_KERNEL(luffa, NULL);
+		CL_ENQUEUE_KERNEL(cubehash, NULL);
+		CL_ENQUEUE_KERNEL(shavite, NULL);
+		CL_ENQUEUE_KERNEL(simd, NULL)
+		CL_ENQUEUE_KERNEL(echo_hamsi_fugue, NULL);
+            }
+	}
+	else {
 	if (clState->goffset) {
 		size_t global_work_offset[1];
 
@@ -1566,6 +2156,7 @@ static int64_t opencl_scanhash(struct thr_info *thr, struct work *work,
 	if (unlikely(status != CL_SUCCESS)) {
 		applog(LOG_ERR, "Error %d: Enqueueing kernel onto command queue. (clEnqueueNDRangeKernel)", status);
 		return -1;
+	}
 	}
 
 	status = clEnqueueReadBuffer(clState->commandQueue, clState->outputBuffer, CL_FALSE, 0,
@@ -1622,7 +2213,73 @@ static void opencl_thread_shutdown(struct thr_info *thr)
 	const int thr_id = thr->id;
 	_clState *clState = clStates[thr_id];
 
+	if (clState->chosen_kernel == KL_X11MOD) {
+	    clReleaseKernel(clState->kernel_blake);
+	    clReleaseKernel(clState->kernel_bmw);
+	    clReleaseKernel(clState->kernel_groestl);
+	    clReleaseKernel(clState->kernel_skein);
+	    clReleaseKernel(clState->kernel_jh);
+	    clReleaseKernel(clState->kernel_keccak);
+	    clReleaseKernel(clState->kernel_luffa);
+	    clReleaseKernel(clState->kernel_cubehash);
+	    clReleaseKernel(clState->kernel_shavite);
+	    clReleaseKernel(clState->kernel_simd);
+	    clReleaseKernel(clState->kernel_echo);
+	}
+	else if (clState->chosen_kernel == KL_X13MOD) {
+	    clReleaseKernel(clState->kernel_blake);
+	    clReleaseKernel(clState->kernel_bmw);
+	    clReleaseKernel(clState->kernel_groestl);
+	    clReleaseKernel(clState->kernel_skein);
+	    clReleaseKernel(clState->kernel_jh);
+	    clReleaseKernel(clState->kernel_keccak);
+	    clReleaseKernel(clState->kernel_luffa);
+	    clReleaseKernel(clState->kernel_cubehash);
+	    clReleaseKernel(clState->kernel_shavite);
+	    clReleaseKernel(clState->kernel_simd);
+	    clReleaseKernel(clState->kernel_echo);
+	    clReleaseKernel(clState->kernel_hamsi);
+	    clReleaseKernel(clState->kernel_fugue);
+	}
+	else if (clState->chosen_kernel == KL_NIST5) {
+	    clReleaseKernel(clState->kernel_blake);
+	    clReleaseKernel(clState->kernel_groestl);
+	    clReleaseKernel(clState->kernel_jh);
+	    clReleaseKernel(clState->kernel_keccak);
+	    clReleaseKernel(clState->kernel_skein);
+	}
+	else if (clState->chosen_kernel == KL_JPC) {
+	    clReleaseKernel(clState->kernel_keccak);		
+	    clReleaseKernel(clState->kernel_groestl1);
+	    clReleaseKernel(clState->kernel_skein1);
+	    clReleaseKernel(clState->kernel_blake1);
+	    clReleaseKernel(clState->kernel_jh1);
+		clReleaseKernel(clState->kernel_groestl2);
+	    clReleaseKernel(clState->kernel_skein2);
+	    clReleaseKernel(clState->kernel_blake2);
+	    clReleaseKernel(clState->kernel_jh2);
+		clReleaseKernel(clState->kernel_groestl3);
+	    clReleaseKernel(clState->kernel_skein3);
+	    clReleaseKernel(clState->kernel_blake3);
+	    clReleaseKernel(clState->kernel_jh3);
+		clReleaseKernel(clState->kernel_finale);
+	}
+	else if (clState->chosen_kernel == KL_X13MOD) {
+	    clReleaseKernel(clState->kernel_blake);
+	    clReleaseKernel(clState->kernel_bmw);
+	    clReleaseKernel(clState->kernel_groestl);
+	    clReleaseKernel(clState->kernel_skein);
+	    clReleaseKernel(clState->kernel_jh);
+	    clReleaseKernel(clState->kernel_keccak);
+	    clReleaseKernel(clState->kernel_luffa);
+	    clReleaseKernel(clState->kernel_cubehash);
+	    clReleaseKernel(clState->kernel_shavite);
+	    clReleaseKernel(clState->kernel_simd);
+	    clReleaseKernel(clState->kernel_echo_hamsi_fugue);
+	}
+	else {
 	clReleaseKernel(clState->kernel);
+	}
 	clReleaseProgram(clState->program);
 	clReleaseCommandQueue(clState->commandQueue);
 	clReleaseContext(clState->context);

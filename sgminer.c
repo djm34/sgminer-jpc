@@ -63,6 +63,7 @@ char *curly = ":D";
 #include "myriadcoin-groestl.h"
 #include "quarkcoin.h"
 #include "qubitcoin.h"
+#include "nist5.h"
 
 #if defined(unix) || defined(__APPLE__)
 	#include <errno.h>
@@ -634,6 +635,25 @@ void get_intrange(char *arg, int *val1, int *val2)
 {
 	if (sscanf(arg, "%d-%d", val1, val2) == 1)
 		*val2 = *val1;
+}
+
+void get_intexitval(char *arg, int *val1, int *val2)
+{
+	if (sscanf(arg, "%d:%d", val1, val2) == 1)
+		*val2 = *val1;
+}
+
+void get_intrangeexitval(char *arg, int *val1, int *val2, int *val3)
+{
+	if (sscanf(arg, "%d:%d", val2, val3) == 2)
+	{
+		*val1 = *val2;
+	}
+	else if (sscanf(arg, "%d-%d:%d", val1, val2, val3) != 3)
+	{
+		get_intrange(arg, val1, val2);
+		*val3 = *val2;
+	}
 }
 
 static char *set_devices(char *arg)
@@ -1786,7 +1806,7 @@ static void gen_gbt_work(struct pool *pool, struct work *work)
 	memcpy(work->data + 4 + 32 + 32, &pool->curtime, 4);
 	memcpy(work->data + 4 + 32 + 32 + 4, &pool->gbt_bits, 4);
 
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN ||  gpus[0].kernel == KL_JPC) {
        memcpy(work->data + 4 + 32 + 32 + 4 + 4 + 4,     &pool->gbt_reserved_00, 4);
        memcpy(work->data + 4 + 32 + 32 + 4 + 4 + 4 + 4, &pool->gbt_reserved_01, 4);
     }
@@ -1807,7 +1827,7 @@ static void gen_gbt_work(struct pool *pool, struct work *work)
 
 	memset(work->data + 4 + 32 + 32 + 4 + 4, 0, 4); /* nonce */
 
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN ||  gpus[0].kernel == KL_JPC) {
 	    hex2bin(work->data + 4 + 32 + 32 + 4 + 4 + 4 + 4 + 4, workpadding2, 40 + 0 + 0);
     }
     else {
@@ -1865,7 +1885,7 @@ static bool gbt_decode(struct pool *pool, json_t *res_val)
 	submitold = json_is_true(json_object_get(res_val, "submitold"));
 	bits = json_string_value(json_object_get(res_val, "bits"));
 	workid = json_string_value(json_object_get(res_val, "workid"));
-    if (gpus[0].kernel == KL_JACKPOTCOIN) {
+    if (gpus[0].kernel == KL_JACKPOTCOIN ||  gpus[0].kernel == KL_JPC ) {
    	   superblock = json_integer_value(json_object_get(res_val, "superblock"));
 	   reserved   = json_integer_value(json_object_get(res_val, "roundmask"));
     }
@@ -4327,7 +4347,25 @@ void write_config(FILE *fcfg)
 				case KL_TWECOIN:
 					fprintf(fcfg, TWECOIN_KERNNAME);
                     break;
+                case KL_MARUCOIN:
+					fprintf(fcfg, MARUCOIN_KERNNAME);
+					break;
+				case KL_X11MOD:
+					fprintf(fcfg, X11MOD_KERNNAME);
+					break;
+                case KL_NIST5:
+					fprintf(fcfg, NIST5_KERNNAME);
+					break;            
+				case KL_X13MOD:
+					fprintf(fcfg, X13MOD_KERNNAME);
+					break;
+				case KL_X13MODOLD:
+					fprintf(fcfg, X13MODOLD_KERNNAME);
+					break;
                 case KL_JACKPOTCOIN:
+					fprintf(fcfg, JACKPOTCOIN_KERNNAME);
+                    break;
+                case KL_JPC:
 					fprintf(fcfg, JACKPOTCOIN_KERNNAME);
                     break;
                 case KL_GIVECOIN:
@@ -6140,6 +6178,7 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 	switch (gpus[0].kernel) {
 		case KL_DARKCOIN:
         case KL_GIVECOIN:
+        case KL_X11MOD:
 			darkcoin_regenhash(work);
 			break;
 		case KL_QUBITCOIN:
@@ -6163,6 +6202,9 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 		case KL_GROESTLCOIN:
 			groestlcoin_regenhash(work);
             break;
+        case KL_NIST5:
+			nist5_regenhash(work);
+			break;
         case KL_SIFCOIN:
 			sifcoin_regenhash(work);
 			break;
@@ -6170,20 +6212,19 @@ static void rebuild_nonce(struct work *work, uint32_t nonce)
 			twecoin_regenhash(work);
 			break;
         case KL_JACKPOTCOIN:
+		case KL_JPC:
 			advsha3_regenhash(work);
+			break;
+        case KL_MARUCOIN:
+		case KL_X13MOD:
+		case KL_X13MODOLD:
+			marucoin_regenhash(work);
 			break;
 		default:
 			scrypt_regenhash(work);
 			break;
 	}
 
-    if (opt_debughash) {
-		char *htarget = bin2hex(work->data, 88);
-		applog(LOG_DEBUG, "REGEN DATA : %s", htarget);
-		htarget = bin2hex(work->hash, 32);
-		applog(LOG_DEBUG, "REGEN HASH : %s", htarget);
-		free(htarget);
-	}
 
 }
 
