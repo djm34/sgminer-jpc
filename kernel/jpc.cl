@@ -1,7 +1,7 @@
 /*
- * AdvSHA3 kernel implementation.
+ * multi-kernel implementation of jackpotcoin algorithm.
  *
- * @author  mkimid
+ * Copyright (c) 2014 djm34
  */
 
 #ifndef ADVSHA3_CL

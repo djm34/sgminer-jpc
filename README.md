@@ -1,24 +1,21 @@
-# sgminer
+# sgminer-jpc
 
 
 ## Introduction
 
-This is the updated version of SPH SGMINER to support Jackpotcoin Secure Hashing Method.
+This is an optimized version of jackpotcoin miner to run with 14.6 amd drivers and take full benefit of groestl speed increase.
+
+To use it, you need to use "-k jpc" to mine jackpotcoin. 
+
+For a R9-290x running at 1050MHz: 
+with -k jpc: 5.95MHash/s (instead of 4.2MHash/s (14.6) or 3.5MHash/s (<14.6)). 
+So this is at least a 50% increase (if you are already using 14.6) or almost 100% increase (if you are still using 13.12). 
 
 
-JHA(Jackpotcoin Hashing Algorithm)
+If you find that work usefull please donate to these address 
 
-   1 round SHA3 (Keccak) input hashing with 
-   6 rounds random using 4 (BLACK, JH, GROESTL, SKEIN) candidates hashing methods are applied,
-   
-   It is the most secure hashing method, using ALU and Internal Memory of GPU to reduce
-   the power consumption.
-  
-   for The ASIC, due to the complicity of code, it is hard to apply on ASIC quickly.
-   Becasue of the cost of ASIC is higher than 10x than the general scrypt ASIC.
-   It means, this method has 3~5 years ASIC resist, but, it is very easy to design ASIC,
-   It is the fair way to support CPU/GPU miner at beginning, and 
-   the fair way to support ASIC at the network maintenance stage after 3~5 years.
+JPC: JWdVcJZdmdTdFEM1acumNQjrnrx3J7mdec
+BTC: 1NENYmxwZGHsKFmyjTc5WferTn5VTFb7Ze
 
 
 
